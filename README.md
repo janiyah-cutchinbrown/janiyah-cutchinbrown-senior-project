@@ -5,18 +5,25 @@ This project is a web-based calorie tracking system that will be designed to mon
 
 ## FEATURES
 -User account creation 
+
 -Daily food intake logging with calorie values
+
 -Calculation of total daily calories 
+
 -Goal setting
 
 ## PLANNED STACK
 -FRONTEND: React.js
+
 -BACKEND: C# (.NET Web API)
+
 -DATABASE: Microsoft SQL Server
 
 ## PROJECT DOCUMENTS
 The following documents are included in the 'Archive' folder:
+
 -Senior Project Proposal
+
 -Requirements Document 
 
 ## AUTHOR
