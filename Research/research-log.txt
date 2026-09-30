@@ -2,7 +2,6 @@
 -Discussed the best tech stack to use utilizing ChatGPT at Professor O'Neill's instruction
 -Link to the chat: https://chatgpt.com/share/6aabf574-58f8-83e9-a96d-76ea8a82ff1e
 
-
 09/28/2026
 -Researched Calorie Information APIs 
 -https://calorieapi.com/dashboard
