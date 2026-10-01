@@ -13,11 +13,11 @@ This project is a web-based calorie tracking system that will be designed to mon
 -Goal setting
 
 ## PLANNED STACK
--FRONTEND: React.js
+-FRONTEND: Next.js
 
--BACKEND: C# (.NET Web API)
+-BACKEND: FastAPI
 
--DATABASE: Microsoft SQL Server
+-DATABASE: PostgreSQL Server
 
 ## PROJECT DOCUMENTS
 The following documents are included in the 'Archive' folder:
