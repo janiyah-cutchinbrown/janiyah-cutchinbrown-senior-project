@@ -6,4 +6,6 @@
 -Researched Calorie Information APIs 
 -https://calorieapi.com/dashboard
 
+10/01/2026
+-Updated ChatGPT Link: https://chatgpt.com/share/6aabf574-58f8-83e9-a96d-76ea8a82ff1e
 
