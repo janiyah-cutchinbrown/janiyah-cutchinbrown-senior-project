@@ -9,3 +9,7 @@
 10/01/2026
 -Updated ChatGPT Link: https://chatgpt.com/share/6aabf574-58f8-83e9-a96d-76ea8a82ff1e
 
+10/02/2026
+-Found a site to create a mockup of the website design
+-https://lucid.app/documents#/documents?folder_id=home
+
