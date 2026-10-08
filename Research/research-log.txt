@@ -14,5 +14,24 @@
 -https://lucid.app/documents#/documents?folder_id=home
 
 10/08/2026
--Researched how to create a database in PostgreSQL
--https://www.postgresql.org/docs/current/sql-createdatabase.html
+-PostgreSQL Creating Databases https://www.postgresql.org/docs/current/sql-createdatabase.html
+-FastAPI SQL (Relational) Databases: https://fastapi.tiangolo.com/tutorial/sql-databases/#install-sqlmodel
+-Install/Intro to SQLAlchemy: https://docs.sqlalchemy.org/en/20/intro.html
+-Psycopg PostgreSQL Database Adapter: https://pypi.org/project/psycopg2/
+-First Steps for FastAPI File: https://fastapi.tiangolo.com/tutorial/first-steps
+-Create_Engine() SQLAlchemy: https://docs.sqlalchemy.org/en/20/core/engines.html
+-Python-Dotenv: https://bbc2.github.io/python-dotenv/
+-SQLAlchemy Declarative Mapping: https://docs.sqlalchemy.org/en/20/orm/quickstart.html
+-SQLAlchemy Creating Database Tables: https://docs.sqlalchemy.org/en/20/core/metadata.html
+-Python OS Interfaces: https://docs.python.org/3/library/os.html
+-FastAPI Request Body (BaseModel): https://fastapi.tiangolo.com/tutorial/body/
+-SQLAlchemy Session: https://docs.sqlalchemy.org/en/20/orm/session_basics.html
+-FastAPI Dependencies: https://fastapi.tiangolo.com/tutorial/dependencies/
+-SQLAlchemy Writing SELECT Statements: https://docs.sqlalchemy.org/en/20/orm/queryguide/select.html
+-FastAPI Handling Errors: https://fastapi.tiangolo.com/tutorial/handling-errors/
+-FastAPI Password Hashing: https://fastapi.tiangolo.com/tutorial/security/oauth2-jwt/
+-SQLAlchemy Table Configuration: https://docs.sqlalchemy.org/en/20/orm/declarative_tables.html
+-PostgreSQL ALTER Table: https://www.postgresql.org/docs/current/sql-altertable.html
+-Python Datetime: https://docs.python.org/3/library/datetime.html
+
+
