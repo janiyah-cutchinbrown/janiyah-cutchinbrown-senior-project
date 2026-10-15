@@ -4,6 +4,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from fastapi.middleware.cors import CORSMiddleware
 
 from database import get_db
 from models import User, FoodEntry
@@ -11,6 +12,15 @@ from security import hash_password, verify_password
 
 # create the FastAPI application
 app = FastAPI()
+
+# allow the Next.js frontend to communicate with the backend 
+app.add_middleware(
+	CORSMiddleware,
+	allow_origins=["http://localhost:3000"],
+	allow_credentials=True,
+	allow_methods=["*"],
+	allow_headers=["*"],
+)
 
 # define the data required when creating a user account
 class UserCreate(BaseModel):
@@ -24,6 +34,7 @@ class LoginRequest(BaseModel):
 
 # define the data required when recording a food entry
 class FoodEntryCreate(BaseModel):
+	user_id: int # identify which account owns the entry
 	food_name: str
 	calories: float
 	entry_date: datetime | None = None
@@ -168,12 +179,12 @@ def create_food_entry(
 			status_code=400,
 			detail="Calories must be greater than 0"
 		)
-	# use the cirrent date and time if no date was provided
+	# use the current date and time if no date was provided
 	entry_date = entry.entry_date or datetime.now(timezone.utc)
 
 	# create the food entry
 	new_entry = FoodEntry(
-		user_id=1,
+		user_id=entry.user_id,
 		food_name=entry.food_name,
 		calories=entry.calories,
 		entry_date=entry_date
@@ -190,3 +201,23 @@ def create_food_entry(
 		"message": "Food entry created successfully!",
 		"entry_id": new_entry.id
 	}
+# retrieve the saved food entries for the user 
+@app.get("/food-entries")
+def get_food_entries(user_id: int, db: Session = Depends(get_db)):
+	# retrieve food entries from the database, newest first
+	entries = db.scalars(
+		select(FoodEntry)
+		.where(FoodEntry.user_id == user_id)
+		.order_by(FoodEntry.entry_date.desc())
+	).all()
+	
+	# return the saved entries as a list of dictionaries 
+	return [
+		{
+			"id": entry.id,
+			"food_name": entry.food_name,
+			"calories": entry.calories,
+			"entry_date": entry.entry_date.isoformat()
+		}
+		for entry in entries
+	]

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 // describe the info for the food entry 
 type FoodEntry = {
@@ -11,8 +11,66 @@ type FoodEntry = {
 };
 
 export default function Home() {
+	// track which screen the user should see
+	const [view, setView] = useState<"login" | "register" | "tracker">("login");
+	
+	// store the email and password 
+	const [email, setEmail] = useState("");
+	const [password, setPassword] = useState("");
+
+	// store message that inform the user whether authentication succeeded or failed
+	const [authMessage, setAuthMessage] = useState("");
+
+	// store the id of the user who logs in successfully 
+	const [userId, setUserId] = useState<number | null>(null);
+
 	// store the food entries added during the session on current page
 	const [foodEntries, setFoodEntries] = useState<FoodEntry[]>([]);
+	
+	// load the saved food entries from the backend when the page opens 
+	useEffect(() => {
+		async function loadFoodEntries() {
+			try {
+				// request saved entries from FastAPI
+				const response = await fetch(
+					`http://localhost:8000/food-entries?user_id=${userId}`
+				);
+
+				// stop if the backend reports an error 
+				if (!response.ok) {
+					throw new Error("Could not load food entries.");
+				}
+
+				// convert the response into a food entry data 
+				const data = await response.json();
+		
+				// convert backend field names into frontend field names
+				const savedEntries: FoodEntry[] = data.map(
+					(entry: {
+						id: number;
+						food_name: string;
+						calories: number;	
+						entry_date: string;
+					}) => ({
+						id: entry.id,
+						foodName: entry.food_name,
+						calories: entry.calories,
+						date: entry.entry_date.slice(0, 10),
+					})
+				);
+				
+				// display the entries retrieved from the database
+				setFoodEntries(savedEntries);
+			} catch (error) {
+				// report errors 
+				console.error("Error while loading food entries:", error);
+			}
+		}
+		
+		if (userId === null) return;
+		
+		loadFoodEntries();
+	}, [userId]);
 
 	// stores the current value entered into the form
 	const [foodName, setFoodName] = useState("");
@@ -27,31 +85,193 @@ export default function Home() {
 		.reduce((total, entry) => total + entry.calories, 0);
 
 	// add the new food entry when the form is submitted 
-	function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+	async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
 		event.preventDefault();
 
 		const calorieAmount = Number(calories);
 
 		// reject blank food names and invalid calorie amounts 
-		if (!foodName.trim() || !Number.isFinite(calorieAmount) || calorieAmount <= 0) {
+		if (
+			!foodName.trim() ||
+			!Number.isFinite(calorieAmount) ||
+			calorieAmount <= 0
+		) {
 			return;
 		}
-
-		const newEntry: FoodEntry = {
-			id: Date.now(),
-			foodName: foodName.trim(),
-			calories: calorieAmount,
-			date,
-		};
-
-		// add the new entry without removing the existing ones
-		setFoodEntries((previousEntries) => [...previousEntries, newEntry]);
 		
-		// clear the food name and calories for the next entry					
-		setFoodName("");
-		setCalories("");
+		try {
+			// send the food entry to FastAPI
+			const response = await fetch("http://localhost:8000/food-entries", {
+				method : "POST",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify ({
+					user_id: userId,
+					food_name: foodName.trim(),
+					calories: calorieAmount,
+					entry_date: `${date}T12:00:00Z`,
+				}),
+			});
+
+			// stop if the backened reports an error 
+			if (!response.ok) {
+				throw new Error("Could not save food entry.");
+			}
+
+			// display the new entry if the backend accepts it 
+			const newEntry: FoodEntry = {
+				id: Date.now(),
+				foodName: foodName.trim(),
+				calories: calorieAmount,
+				date,
+			};
+
+			// add the new entry without removing existing entries
+			setFoodEntries((previousEntries) => [...previousEntries, newEntry]);
+
+			// clear the form for the next entry
+			setFoodName("");
+			setCalories("");
+		} catch (error) {
+			// report an error if saving fails 
+			console.error("Error saving food entry:", error);
+			alert("Could not save the food entry. Check the backend.");
+		}
 	}
 
+
+        // handle account registration and login form submissions.
+        async function handleAuthSubmit(event: React.FormEvent<HTMLFormElement>) {
+                // Prevent the browser from reloading the page when the form is submitted.
+                event.preventDefault();
+
+                // choose the backend endpoint based on the current screen.
+                const endpoint =
+                        view === "register"
+                                ? "http://localhost:8000/register"
+                                : "http://localhost:8000/login";
+
+                try {
+                        // send the submitted email and password to the backend.
+                        const response = await fetch(endpoint, {
+                                method: "POST",
+                                headers: {
+                                        "Content-Type": "application/json",
+                                },
+                                body: JSON.stringify({ email, password }),
+                        });
+
+                        // read the response from the backend.
+                        const data = await response.json();
+
+                        // display the backend's error if authentication fails.
+                        if (!response.ok) {
+                                setAuthMessage(data.detail || "Authentication failed.");
+                                return;
+                        }
+
+                        // save the ID returned by the backend.
+                        setUserId(data.user_id);
+
+                        // display the success message returned by the backend.
+                        setAuthMessage(data.message);
+
+                        // open the calorie tracker after successful authentication.
+                        setView("tracker");
+                } catch (error) {
+                        // display a message if the backend cannot be reached.
+                        console.error("Authentication error:", error);
+                        setAuthMessage("Could not connect to the server. Please try again.");
+                }
+        }
+
+
+        // display the login or registration screen before showing the tracker.
+        if (view !== "tracker") {
+                return (
+                        <main className="min-h-screen bg-green-50 p-8">
+                                <div className="mx-auto max-w-md rounded-xl bg-white p-6 shadow">
+                                        {/* explain the purpose of the authentication screen. */}
+                                        <h1 className="text-3xl font-bold text-green-800">
+                                                {view === "register" ? "Create Account" : "Welcome Back"}
+                                        </h1>
+
+                                        <p className="mt-2 text-gray-600">
+                                                {view === "register"
+                                                        ? "Register to start tracking your meals."
+                                                        : "Log in to access your calorie tracker."}
+                                        </p>
+
+                                        {/* collect the email and password for authentication. */}
+                                        <form onSubmit={handleAuthSubmit} className="mt-6 space-y-4">
+                                                <div>
+                                                        <label htmlFor="auth-email" className="block text-gray-700">
+                                                                Email
+                                                        </label>
+                                                        <input
+                                                                id="auth-email"
+                                                                type="email"
+                                                                value={email}
+                                                                onChange={(event) => setEmail(event.target.value)}
+                                                                required
+                                                                className="mt-1 w-full rounded border border-gray-300 p-2"
+                                                        />
+                                                </div>
+
+                                                <div>
+                                                        <label htmlFor="auth-password" className="block text-gray-700">
+                                                                Password
+                                                        </label>
+                                                        <input
+                                                                id="auth-password"
+                                                                type="password"
+                                                                value={password}
+                                                                onChange={(event) => setPassword(event.target.value)}
+                                                                required
+                                                                className="mt-1 w-full rounded border border-gray-300 p-2"
+                                                        />
+                                                </div>
+
+                                                {/* submit the form to the appropriate backend endpoint. */}
+                                                <button
+                                                        type="submit"
+                                                        className="w-full rounded-lg bg-green-700 px-5 py-2 font-semibold text-white hover:bg-green-800"
+                                                >
+                                                        {view === "register" ? "Create Account" : "Log In"}
+                                                </button>
+                                        </form>
+
+                                        {/* display success or error feedback from the backend. */}
+                                        {authMessage && (
+                                                <p className="mt-4 text-sm text-gray-700" role="status">
+                                                        {authMessage}
+                                                </p>
+                                        )}
+
+                                        {/* allow users to switch between login and registration. */}
+                                        <p className="mt-5 text-sm text-gray-600">
+                                                {view === "register"
+                                                        ? "Already have an account?"
+                                                        : "New here?"}{" "}
+                                                <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                                setView(view === "register" ? "login" : "register");
+                                                                setAuthMessage("");
+                                                        }}
+                                                        className="font-semibold text-green-700 underline"
+                                                >
+                                                        {view === "register" ? "Log in" : "Create an account"}
+                                                </button>
+                                        </p>
+                                </div>
+                        </main>
+                );
+        }
+
+
+		
 	return (
 		<main className="min-h-screen bg-green-50 p-8">
 			<div className="mx-auto max-w-4xl">
