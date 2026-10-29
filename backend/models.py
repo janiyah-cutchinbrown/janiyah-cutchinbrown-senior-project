@@ -14,6 +14,12 @@ class User(Base):
 	email: Mapped[str] = mapped_column(String, unique=True, nullable=False)
 	password_hash: Mapped[str] = mapped_column(String, nullable=False)
 
+	# store the user's daily calorie goal 
+	daily_calorie_goal: Mapped[int] = mapped_column(
+		default=2000,
+		nullable=False
+	)
+
 	# track consecutive failed login attempts for account lockout
 	failed_login_attempts: Mapped[int] = mapped_column(
 		default=0,

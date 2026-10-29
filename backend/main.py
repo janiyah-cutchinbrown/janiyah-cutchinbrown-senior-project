@@ -39,6 +39,11 @@ class FoodEntryCreate(BaseModel):
 	calories: float
 	entry_date: datetime | None = None
 
+#define the data required to set a daily calorie goal 
+class CalorieGoalUpdate(BaseModel):
+	user_id: int
+	daily_calorie_goal: int
+
 # test endpoint to verify that the API is running
 @app.get("/")
 def root():
@@ -221,3 +226,54 @@ def get_food_entries(user_id: int, db: Session = Depends(get_db)):
 		}
 		for entry in entries
 	]
+# retrieve the user's daily calorie goal 
+@app.get("/calorie-goal")
+def get_calorie_goal(user_id: int, db: Session = Depends(get_db)):
+	# find the account in the datatbase
+	user = db.get(User, user_id)
+
+	# return an error if the account does not exist 
+	if user is None: 
+		raise HTTPException(
+			status_code=404,
+			detail="User not found"
+		)
+
+	# return the save calorie goal 
+	return {
+		"user_id": user.id,
+		"daily_calorie_goal": user.daily_calorie_goal
+	}
+# update a user's daily calorie goal 
+@app.put("/calorie-goal")
+def update_calorie_goal(
+	goal: CalorieGoalUpdate,
+	db: Session = Depends(get_db)
+):
+
+	# reject zero or negative goals 
+	if goal.daily_calorie_goal <= 0: 
+		raise HTTPException(
+			status_code=400,
+			detail="Daily calorie goal must be greater than 0"
+		)
+	# find the account in the database 
+	user = db.get(User, goal.user_id)
+
+	# return an error if the account does not exist
+	if user is None: 
+		raise HTTPException(
+			status_code=404,
+			detail="User not found"
+		)
+
+	# save the updated goal 
+	user.daily_calorie_goal = goal.daily_calorie_goal
+	db.commit()
+	db.refresh(user)
+
+	return {
+		"message": "Daily calorie goal updated successfully",
+		"user_id": user.id,
+		"daily_calorie_goal": user.daily_calorie_goal
+	}
