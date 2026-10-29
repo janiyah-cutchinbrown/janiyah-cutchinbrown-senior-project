@@ -26,7 +26,13 @@ export default function Home() {
 
 	// store the food entries added during the session on current page
 	const [foodEntries, setFoodEntries] = useState<FoodEntry[]>([]);
+
+	// store the user's daily calorie goal 
+	const [calorieGoal, setCalorieGoal] = useState("2000");
 	
+	// store messages about saving the calorie goal to the backend 
+	const [goalMessage, setGoalMessage] = useState("");
+
 	// load the saved food entries from the backend when the page opens 
 	useEffect(() => {
 		async function loadFoodEntries() {
@@ -70,6 +76,35 @@ export default function Home() {
 		if (userId === null) return;
 		
 		loadFoodEntries();
+	}, [userId]);
+
+	// load the user's saved calorie goal 
+	useEffect(() => {
+			async function loadCalorieGoal() {
+					try {
+						const response = await fetch(
+							`http://localhost:8000/calorie-goal?user_id=${userId}`
+						);
+
+						if (!response.ok) {
+								throw new Error("Could not load calorie goal.");
+
+						}
+
+						const data = await response.json();
+
+						// display the saved goal to the input field 
+						setCalorieGoal(String(data.daily_calorie_goal));
+					} catch (error) {
+						console.error("Error while loading calorie goal:", error);
+						setGoalMessage("Could not load your calorie goal.");
+					}
+			}
+
+			// wait until the user has logged in 
+			if (userId == null) return;
+
+			loadCalorieGoal();
 	}, [userId]);
 
 	// stores the current value entered into the form
@@ -186,6 +221,45 @@ export default function Home() {
                 }
         }
 
+		async function handleSaveCalorieGoal() {
+			// make sure a user is logged in 
+			if (userId === null) return;
+
+			const goalValue = Number(calorieGoal);
+
+			// only allow positive, whole number goals 
+			if (!Number.isInteger(goalValue) || goalValue <= 0) {
+				setGoalMessage("Enter a positive whole-number calorie goal.");
+				return;
+			}
+
+			try {
+				const response = await fetch("http://localhost:8000/calorie-goal", {
+					method: "PUT",
+					headers: {
+						"Content-Type": "application/json",
+					},
+
+					body: JSON.stringify({
+						user_id: userId,
+						daily_calorie_goal: goalValue,
+					}),
+				});
+
+				const data = await response.json();
+
+				if (!response.ok) {
+					throw new Error(data.detail || "Could not save calorie goal.");
+				}
+
+				setCalorieGoal(String(data.daily_calorie_goal));
+				setGoalMessage("Calorie goal saved successfully!");
+			} catch (error) {
+				console.error("Error saving calorie goal:", error);
+				setGoalMessage("Could not save your calorie goal. Please try again.");
+			}
+		}
+
 
         // display the login or registration screen before showing the tracker.
         if (view !== "tracker") {
@@ -293,6 +367,41 @@ export default function Home() {
 					<p className="mt-4 text-4xl font-bold text-green-700">
 						{dailyCalories} calories
 					</p>
+
+					{/* Display and update the daily calorie goal */}
+					<div className="mt-6">
+						<label htmlFor="calorie-goal" className="block text-gray-700">
+							Daily Calorie Goal
+						</label>
+
+						<div className="mt-1 flex flex-wrap gap-3">
+							<input
+								id="calorie-goal"
+								type="number"
+								min="1"
+								step="1"
+								value={calorieGoal}
+								onChange={(event) => setCalorieGoal(event.target.value)}
+								className="rounded border border-gray-300 p-2"
+								required
+							/>	
+
+							<button
+								type="button"
+								onClick={handleSaveCalorieGoal}
+								className="rounded-lg bg-green-700 px-5 py-2 font-semibold text-white hover:bg-green-800"
+								>
+									Save Goal
+								</button>				
+						</div>
+
+						{/* Display the result of saving the goal */}
+						{goalMessage && (
+							<p className="mt-2 text-sm text-gray-700" role="status">
+								{goalMessage}
+							</p>
+						)}
+					</div>
 
 					<label htmlFor="entry-date" className="mt-4 block text-gray-700">
 						Select date
