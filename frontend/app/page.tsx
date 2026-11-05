@@ -27,8 +27,18 @@ export default function Home() {
 	// store the food entries added during the session on current page
 	const [foodEntries, setFoodEntries] = useState<FoodEntry[]>([]);
 
+	// track which food entry is currently being edited 
+	const [editingEntryId, setEditingEntryId] = useState<number | null>(null);
+
+	// store the updated information while editing 
+	const [editFoodName, setEditFoodName] = useState("");
+	const [editCalories, setEditCalories] = useState("");
+	const [editDate, setEditDate] = useState("");
+
 	// store the user's daily calorie goal 
 	const [calorieGoal, setCalorieGoal] = useState("2000");
+
+    const [isEditingGoal, setIsEditingGoal] = useState(false);
 	
 	// store messages about saving the calorie goal to the backend 
 	const [goalMessage, setGoalMessage] = useState("");
@@ -110,14 +120,20 @@ export default function Home() {
 	// stores the current value entered into the form
 	const [foodName, setFoodName] = useState("");
 	const [calories, setCalories] = useState("");
-	const [date, setDate] = useState(
-		new Date().toLocaleDateString("en-CA")
-	);
+	const [date, setDate] = useState("");
+    // set the selected date after the component loads in the browser.
+    useEffect(() => {
+        setDate(new Date().toLocaleDateString("en-CA"));
+    }, []);
+
 
 	// calculate the calories recorded for the selected date
 	const dailyCalories = foodEntries
 		.filter((entry) => entry.date === date)
 		.reduce((total, entry) => total + entry.calories, 0);
+
+    //calculate how many calories remain under the daily goal
+    const caloriesRemaining = Number(calorieGoal) - dailyCalories;
 
 	// add the new food entry when the form is submitted 
 	async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -154,9 +170,11 @@ export default function Home() {
 				throw new Error("Could not save food entry.");
 			}
 
-			// display the new entry if the backend accepts it 
+			// get the food entry ID assigned by PostgreSQL
+			const data = await response.json();
+
 			const newEntry: FoodEntry = {
-				id: Date.now(),
+				id: data.entry_id,
 				foodName: foodName.trim(),
 				calories: calorieAmount,
 				date,
@@ -254,12 +272,124 @@ export default function Home() {
 
 				setCalorieGoal(String(data.daily_calorie_goal));
 				setGoalMessage("Calorie goal saved successfully!");
+                setIsEditingGoal(false);
 			} catch (error) {
 				console.error("Error saving calorie goal:", error);
 				setGoalMessage("Could not save your calorie goal. Please try again.");
 			}
 		}
 
+		function handleStartEdit(entry: FoodEntry) {
+			setEditingEntryId(entry.id);
+			setEditFoodName(entry.foodName);
+			setEditCalories(String(entry.calories));
+			setEditDate(entry.date);
+		}
+
+		function handleCancelEdit() {
+			setEditingEntryId(null);
+		}
+
+		// save the updated food entry to the backend and update the state 
+		async function handleSaveEdit(entryId: number) {
+			if (userId === null) return;
+
+			const calorieAmount = Number(editCalories);
+
+			// reject invalid information
+			if (
+				!editFoodName.trim() ||
+				editCalories.trim() === "" ||
+				!Number.isFinite(calorieAmount) ||
+				calorieAmount <= 0 ||
+				!editDate
+			) {
+				alert("Enter a food name, positive calories, and a date.");
+				return;
+			}
+
+			try {
+				// send the updated food entry to FastAPI
+				const response = await fetch(
+					`http://localhost:8000/food-entries/${entryId}`,
+					{
+						method: "PUT",
+						headers: {
+							"Content-Type": "application/json",
+
+						},
+
+						body: JSON.stringify({
+							user_id: userId,
+							food_name: editFoodName.trim(),
+							calories: calorieAmount,
+							entry_date: `${editDate}T12:00:00Z`,
+						}),
+					}
+				);
+
+				if (!response.ok) {
+					throw new Error("Could not update food entry.");
+				}
+
+				// update the food entry displayed on the page 
+				setFoodEntries((previousEntries) =>
+					previousEntries.map((entry) =>
+						entry.id === entryId 
+							? { 
+								...entry, 
+								foodName: editFoodName.trim(), 
+								calories: calorieAmount, 
+								date: editDate 
+							  }
+							: entry
+					)
+				);
+
+				// close the editing frame 
+				setEditingEntryId(null);
+			} catch (error) {
+				console.error("Error updating food entry:", error);
+				alert("Could not update the food entry. Please try again.");
+			}
+		}
+
+		// delete a food entry from the backend and remove it from the state 
+		async function handleDeleteEntry(entryId: number) {
+			// make sure the user is logged in 
+			if (userId === null) return;
+
+			// ask the user to confirm before deleting the entry 
+			const confirmed = window.confirm(
+				"Are you sure you want to delete this food entry?"
+			);
+
+			// stop if the user cancels the deletion
+			if (!confirmed) return;
+
+			try {
+				// send the delete request to FastAPI
+				const response = await fetch(
+					`http://localhost:8000/food-entries/${entryId}?user_id=${userId}`,
+					{
+						method: "DELETE",
+					}
+				);
+
+				// stop if the backend could not delete the entry
+				if (!response.ok) {
+					throw new Error("Could not delete food entry.");
+				}
+
+				// remove the deleted entry from the displayed food log
+				setFoodEntries((previousEntries) =>
+					previousEntries.filter((entry) => entry.id !== entryId)
+				);
+			} catch (error) {
+				console.error("Error deleting food entry:", error);
+				alert("Could not delete the food entry. Please try again.");
+			}
+		}
 
         // display the login or registration screen before showing the tracker.
         if (view !== "tracker") {
@@ -355,7 +485,7 @@ export default function Home() {
 				</h1>
 
 				<p className="mt-2 text-gray-600">
-					Track your meals and work toward your daily calorie goal.
+					Track your meals and work toward your daily calorie goal!
 				</p>
 
 				{/* Display the total calories for the selected date */}
@@ -368,13 +498,52 @@ export default function Home() {
 						{dailyCalories} calories
 					</p>
 
-					{/* Display and update the daily calorie goal */}
-					<div className="mt-6">
-						<label htmlFor="calorie-goal" className="block text-gray-700">
-							Daily Calorie Goal
-						</label>
+                    {/* Display calories remaining under the daily goal */}
+                    <p className="mt-3 text-lg text-gray-700">
+                        {caloriesRemaining >= 0 ? (
+                            <>
+                                <span className="font-semibold">{caloriesRemaining.toLocaleString()}</span>
+                                {" calories remaining"}
+                            </>
+                        ) : (
+                            <>
+                            <span className="font-semibold">
+                                {Math.abs(caloriesRemaining).toLocaleString()}
+                            </span>
+                            {" calories over your goal"}
+                            </>
+                        )}
+                    </p>
 
-						<div className="mt-1 flex flex-wrap gap-3">
+				{/* Display and update the daily calorie goal */}
+				<div className="mt-6">
+					<p className="text-sm text-gray-600">Daily Calorie Goal</p>
+
+					{/* Show the saved goal as text instead of a permanent textbox */}
+					<p className="mt-1 text-2xl font-bold text-green-800">
+						{Number(calorieGoal).toLocaleString()} calories
+					</p>
+
+					{/* Toggle between editing and viewing the goal */}
+					<button
+						type="button"
+						onClick={() => {
+							if (isEditingGoal) {
+								setIsEditingGoal(false);
+								setGoalMessage("");
+							} else {
+								setIsEditingGoal(true);
+								setGoalMessage("");
+							}
+						}}
+						className="mt-2 rounded-lg border border-green-700 px-4 py-2 font-semibold text-green-700 hover:bg-green-50"
+					>
+						{isEditingGoal ? "Cancel" : "Edit Goal"}
+					</button>
+
+					{/* Only show the input and Save button while editing */}
+					{isEditingGoal && (
+						<div className="mt-3 flex flex-wrap gap-3">
 							<input
 								id="calorie-goal"
 								type="number"
@@ -383,25 +552,27 @@ export default function Home() {
 								value={calorieGoal}
 								onChange={(event) => setCalorieGoal(event.target.value)}
 								className="rounded border border-gray-300 p-2"
-								required
-							/>	
+							/>
 
 							<button
 								type="button"
 								onClick={handleSaveCalorieGoal}
 								className="rounded-lg bg-green-700 px-5 py-2 font-semibold text-white hover:bg-green-800"
-								>
-									Save Goal
-								</button>				
+							>
+								Save Goal
+							</button>
 						</div>
+					)}
 
-						{/* Display the result of saving the goal */}
-						{goalMessage && (
-							<p className="mt-2 text-sm text-gray-700" role="status">
-								{goalMessage}
-							</p>
-						)}
-					</div>
+					{/* Display the result of saving the goal */}
+					{goalMessage && (
+						<p className="mt-2 text-sm text-gray-700" role="status">
+							{goalMessage}
+						</p>
+					)}
+				</div>
+
+
 
 					<label htmlFor="entry-date" className="mt-4 block text-gray-700">
 						Select date
@@ -476,14 +647,104 @@ export default function Home() {
 							{foodEntries
 								.filter((entry) => entry.date === date)
 								.map((entry) => (
-									<li
-										key={entry.id}
-										className="flex justify-between py-3"
-									>
-										<span>{entry.foodName}</span>
-										<span className="font-semibold">
-											{entry.calories} calories
-										</span>
+									<li key={entry.id} className="py-3">
+
+										{/* Show editing fields only for the selected entry */}
+										{editingEntryId === entry.id ? (
+											<div className="space-y-3">
+
+												<div>
+													<label className="block text-gray-700">
+														Food name
+													</label>
+													<input
+														type="text"
+														value={editFoodName}
+														onChange={(event) =>
+															setEditFoodName(event.target.value)
+														}
+														className="w-full rounded border p-2"
+													/>
+												</div>
+
+												<div>
+													<label className="block text-gray-700">
+														Calories
+													</label>
+													<input
+														type="number"
+														min="0.1"
+														step="any"
+														value={editCalories}
+														onChange={(event) =>
+															setEditCalories(event.target.value)
+														}
+														className="w-full rounded border p-2"
+													/>
+												</div>
+
+												<div>
+													<label className="block text-gray-700">
+														Date
+													</label>
+													<input
+														type="date"
+														value={editDate}
+														onChange={(event) =>
+															setEditDate(event.target.value)
+														}
+														className="rounded border p-2"
+													/>
+												</div>
+
+												<div className="flex gap-3">
+													<button
+														type="button"
+														onClick={() => handleSaveEdit(entry.id)}
+														className="rounded bg-green-700 px-4 py-2 text-white"
+													>
+														Save Changes
+													</button>
+
+													<button
+														type="button"
+														onClick={handleCancelEdit}
+														className="rounded border px-4 py-2"
+													>
+														Cancel
+													</button>
+												</div>
+											</div>
+										) : (
+											/* Display the food entry normally */
+											<div className="flex items-center justify-between gap-3">
+												<span>{entry.foodName}</span>
+
+												<div className="flex items-center gap-3">
+													<span className="font-semibold">
+														{entry.calories} calories
+													</span>
+
+													<button
+														type="button"
+														onClick={() => handleStartEdit(entry)}
+														className="rounded border border-green-700 px-3 py-1 text-green-700"
+													>
+														Edit
+													</button>
+
+													{/* Delete the selected food entry */}
+													<button
+														type="button"
+														onClick={() => handleDeleteEntry(entry.id)}
+														className="rounded border border-red-600 px-3 py-1 text-red-600"
+													>
+														Delete
+													</button>
+												</div>
+											</div>
+										)}
+										
 									</li>
 								))}
 						</ul>
@@ -493,3 +754,4 @@ export default function Home() {
 		</main>
 	);
 }
+
