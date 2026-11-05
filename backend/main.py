@@ -37,7 +37,14 @@ class FoodEntryCreate(BaseModel):
 	user_id: int # identify which account owns the entry
 	food_name: str
 	calories: float
-	entry_date: datetime | None = None
+	entry_date: datetime 
+
+# define the information needed to edit an existing food entry
+class FoodEntryUpdate(BaseModel):
+	user_id: int
+	food_name: str
+	calories: float
+	entry_date: datetime
 
 #define the data required to set a daily calorie goal 
 class CalorieGoalUpdate(BaseModel):
@@ -277,3 +284,69 @@ def update_calorie_goal(
 		"user_id": user.id,
 		"daily_calorie_goal": user.daily_calorie_goal
 	}
+
+# update an existing food entry
+@app.put("/food-entries/{entry_id}")
+def update_food_entry(
+	entry_id: int,
+	entry: FoodEntryUpdate,
+	db: Session = Depends(get_db)
+):
+
+	# find the food entry using its unique ID
+	saved_entry = db.get(FoodEntry, entry_id)
+
+	# make sure the entry exists and belongs to this user 
+	if saved_entry is None or saved_entry.user_id != entry.user_id:
+		raise HTTPException(
+			status_code=404,
+			detail="Food entry not found"
+		)
+
+	# prevent blank food names 
+	if not entry.food_name.strip():
+		raise HTTPException(
+			status_code=400,
+			detail="Food name cannot be blank"
+		)
+
+	# prevent invalid calorie amounts 
+	if entry.calories <= 0:
+		raise HTTPException(
+			status_code=400,
+			detail="Calories must be greater than 0"
+		)
+	
+	# update the existing entry 
+	saved_entry.food_name = entry.food_name
+	saved_entry.calories = entry.calories
+	saved_entry.entry_date = entry.entry_date
+
+	# save the changes to PostgreSQL
+	db.commit()
+	db.refresh(saved_entry)
+
+	return {
+		"message": "Food entry updated successfully",
+		"id": saved_entry.id,
+		"food_name": saved_entry.food_name,
+		"calories": saved_entry.calories,
+		"entry_date": saved_entry.entry_date.isoformat()
+	}
+
+# delete an existing food entry 
+@app.delete("/food-entries/{entry_id}")
+def delete_food_entry(
+	entry_id: int,
+	user_id: int,
+	db: Session = Depends(get_db)
+):
+	# find the food entry by its ID 
+	saved_entry = db.get(FoodEntry, entry_id)
+
+	# make sure the entry exists and belongs to this user 
+	if saved_entry is None or saved_entry.user_id != user_id:
+		raise HTTPException(
+			status_code=404,
+			detail="Food entry not found"
+		)
