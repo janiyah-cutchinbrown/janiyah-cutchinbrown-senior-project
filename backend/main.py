@@ -1,14 +1,17 @@
 from datetime import datetime, timedelta, timezone
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Response, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 
 from database import get_db
-from models import User, FoodEntry
+from models import User, FoodEntry, UserSession
 from security import hash_password, verify_password
+
+import secrets
+import hashlib
 
 # create the FastAPI application
 app = FastAPI()
@@ -113,7 +116,7 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
 
 # login endpoint
 @app.post("/login")
-def login(user: LoginRequest, db: Session = Depends(get_db)):
+def login(user: LoginRequest, response: Response,db: Session = Depends(get_db)):
 	# find the account that matched with the submitted email
 	result = db.execute(
 		select(User).where(User.email == user.email)
@@ -167,18 +170,187 @@ def login(user: LoginRequest, db: Session = Depends(get_db)):
 	existing_user.locked_until = None
 	db.commit()
 	
+	# generate a secure random session token 
+	session_token = secrets.token_urlsafe(32)
+
+	# store only the SHA-256 hash of the token in PostgreSQL
+	hashed_token = hashlib.sha256(
+		session_token.encode()
+	).hexdigest()
+
+	# set the initial session expiration to five minutes 
+	expiration = datetime.now(timezone.utc) + timedelta(minutes=5)
+
+	# create a new session record 
+	new_session = UserSession(
+		user_id=existing_user.id,
+		token_hash=hashed_token,
+		expires_at=expiration
+	)
+	
+	db.add(new_session)
+	db.commit()
+
+	# send the session token to the browser in the HttpOnly cookie
+	response.set_cookie(
+		key="session_token",
+		value=session_token,
+		httponly=True,
+		secure=False, # local HTTP development only; True for HTTPS
+		samesite="lax",
+		path="/"
+	)
+
 	# login successful
 	return {
 		"message": "Login successful",
 		"user_id": existing_user.id
 	}
 
+# check whether the user has a valid login session
+@app.get("/session")
+def check_session(request: Request, db: Session = Depends(get_db)):
+
+	# retrieve the session token from the browser's cookies
+	session_token = request.cookies.get("session_token")
+
+	# reject the requests wihout a session cookie
+	if not session_token:
+		raise HTTPException(
+			status_code=401,
+			detail="Not authenticated"
+		)
+
+	# hash the token to compare it with the database
+	hashed_token = hashlib.sha256(
+		session_token.encode()
+	).hexdigest()
+
+	# find the matching session
+	result = db.execute(
+		select(UserSession).where(
+			UserSession.token_hash == hashed_token
+		)
+	)
+
+	existing_session = result.scalar_one_or_none()
+
+	# reject invalid or expired sessions
+	if (
+		existing_session is None 
+		or datetime.now(timezone.utc) >= existing_session.expires_at
+	):
+		raise HTTPException(
+			status_code=401,
+			detail="Session expired or invalid"
+		)
+
+	# extend the session expiration after authenticated activity
+	existing_session.expires_at = (
+		datetime.now(timezone.utc) + timedelta(minutes=5)
+	)
+
+	# save the updated expiration time
+	db.commit()
+
+	
+	# return the authenticated user's ID
+	return {
+		"message": "Session valid",
+		"user_id": existing_session.user_id
+	}
+
+# log out and invalidate the user's session
+@app.post("/logout")
+def logout(
+	request: Request,
+	response: Response,
+	db: Session = Depends(get_db)
+):
+
+	# retrieve the session token from the cookie
+	session_token = request.cookies.get("session_token")
+
+	if session_token:
+		# hash the token to find the saved session
+		hashed_token = hashlib.sha256(
+			session_token.encode()
+		).hexdigest()
+
+		# search for the session in PostgreSQL
+		result = db.execute(
+			select(UserSession).where(
+				UserSession.token_hash == hashed_token
+			)
+		)
+
+		existing_session = result.scalar_one_or_none()
+
+		# delete the session so it cannot be reused
+		if existing_session:
+			db.delete(existing_session)
+			db.commit()
+
+	# remove the browser's session cookie 
+	response.delete_cookie(
+		key="session_token",
+		path="/"
+	)
+
+	return {"message": "Logged out successfully"}
+
 # record a food entry for the user 
+def get_current_user_id(
+	request: Request,
+	db:Session = Depends(get_db)
+):
+	# read the session token from the browser's cookies
+	session_token = request.cookies.get("session_token")
+
+	# reject requests without a session token
+	if not session_token:
+		raise HTTPException(
+			status_code=401,
+			detail="Not authenticated"
+		)
+
+	# hash the token to compare it with the database
+	hashed_token = hashlib.sha256(
+		session_token.encode()
+	).hexdigest()
+
+	# find the matching session in PostgreSQL
+	existing_session = db.scalar(
+		select(UserSession).where(
+			UserSession.token_hash == hashed_token
+		)
+	)
+
+	# reject invalid or expired session 
+	if (
+		existing_session is None 
+		or datetime.now(timezone.utc) >= existing_session.expires_at
+	):
+		raise HTTPException(
+			status_code=401,
+			detail="Session expired or invalid"
+		)
+	# return the authenticated user's ID
+	return existing_session.user_id
+
 @app.post("/food-entries")
 def create_food_entry(
 	entry: FoodEntryCreate,
-	db: Session = Depends(get_db)
+	db: Session = Depends(get_db),
+	current_user_id: int = Depends(get_current_user_id)
 ):
+
+	# prevent creating entries for another account 
+	if entry.user_id != current_user_id:
+		raise HTTPException(
+			status_code=403,
+			detail="Access denied"
+		)
 	# reject a blank food name 
 	if not entry.food_name.strip():
 		raise HTTPException(
@@ -215,7 +387,19 @@ def create_food_entry(
 	}
 # retrieve the saved food entries for the user 
 @app.get("/food-entries")
-def get_food_entries(user_id: int, db: Session = Depends(get_db)):
+def get_food_entries(
+	user_id: int, 
+	db: Session = Depends(get_db),
+	current_user_id: int = Depends(get_current_user_id)
+	):
+
+	# prevent retrieving entries for another account
+	if user_id != current_user_id:
+		raise HTTPException(
+			status_code=403,
+			detail="Access denied"
+		)
+	
 	# retrieve food entries from the database, newest first
 	entries = db.scalars(
 		select(FoodEntry)
@@ -235,7 +419,19 @@ def get_food_entries(user_id: int, db: Session = Depends(get_db)):
 	]
 # retrieve the user's daily calorie goal 
 @app.get("/calorie-goal")
-def get_calorie_goal(user_id: int, db: Session = Depends(get_db)):
+def get_calorie_goal(
+	user_id: int, 
+	db: Session = Depends(get_db),
+	current_user_id: int = Depends(get_current_user_id)
+):
+
+	# prevent users from viewing another account's calorie goal
+	if user_id != current_user_id:
+		raise HTTPException(
+			status_code=403,
+			detail="Access denied"
+		)
+	
 	# find the account in the datatbase
 	user = db.get(User, user_id)
 
@@ -255,9 +451,17 @@ def get_calorie_goal(user_id: int, db: Session = Depends(get_db)):
 @app.put("/calorie-goal")
 def update_calorie_goal(
 	goal: CalorieGoalUpdate,
-	db: Session = Depends(get_db)
+	db: Session = Depends(get_db),
+	current_user_id: int = Depends(get_current_user_id)
 ):
 
+	# prevent users from updating another account's calorie goal
+	if goal.user_id != current_user_id:
+		raise HTTPException(
+			status_code=403,
+			detail="Access denied"
+		)
+	
 	# reject zero or negative goals 
 	if goal.daily_calorie_goal <= 0: 
 		raise HTTPException(
@@ -290,9 +494,17 @@ def update_calorie_goal(
 def update_food_entry(
 	entry_id: int,
 	entry: FoodEntryUpdate,
-	db: Session = Depends(get_db)
+	db: Session = Depends(get_db),
+	current_user_id: int = Depends(get_current_user_id)
 ):
 
+	# prevent users from updating another account's food entry
+	if entry.user_id != current_user_id:
+		raise HTTPException(
+			status_code=403,
+			detail="Access denied"
+		)
+	
 	# find the food entry using its unique ID
 	saved_entry = db.get(FoodEntry, entry_id)
 
@@ -339,8 +551,17 @@ def update_food_entry(
 def delete_food_entry(
 	entry_id: int,
 	user_id: int,
-	db: Session = Depends(get_db)
+	db: Session = Depends(get_db),
+	current_user_id: int = Depends(get_current_user_id)
 ):
+
+	# prevent users from deleting another account's food entry
+	if user_id != current_user_id:
+		raise HTTPException(
+			status_code=403,
+			detail="Access denied"
+		)
+	
 	# find the food entry by its ID 
 	saved_entry = db.get(FoodEntry, entry_id)
 

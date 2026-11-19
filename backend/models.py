@@ -1,7 +1,7 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, String
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import DateTime, String, Column, Integer, Float, ForeignKey
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 class Base(DeclarativeBase):
 	pass
@@ -47,3 +47,22 @@ class FoodEntry(Base):
 		DateTime(timezone=True),
 		nullable=False
 	)
+
+class UserSession(Base):
+	__tablename__ = "user_sessions"
+
+	# unique identifier for each session
+	id = Column(Integer, primary_key=True, index=True)
+
+	# account associated with the session
+	user_id = Column(
+		Integer, 
+		ForeignKey("users.id", ondelete="CASCADE"), 
+		nullable=False
+	)
+
+	# SHA-256 hash of the session token 
+	token_hash = Column(String(64), unique=True, nullable=False)
+
+	# time when the session expires 
+	expires_at = Column(DateTime(timezone=True),nullable=False)
