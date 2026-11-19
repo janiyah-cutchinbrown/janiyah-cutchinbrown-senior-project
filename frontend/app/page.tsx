@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 // describe the info for the food entry 
 type FoodEntry = {
@@ -24,6 +25,9 @@ export default function Home() {
 	// store the id of the user who logs in successfully 
 	const [userId, setUserId] = useState<number | null>(null);
 
+	// track whether the initial session check has finished 
+	const [checkingSession, setCheckingSession] = useState(true);
+
 	// store the food entries added during the session on current page
 	const [foodEntries, setFoodEntries] = useState<FoodEntry[]>([]);
 
@@ -38,10 +42,143 @@ export default function Home() {
 	// store the user's daily calorie goal 
 	const [calorieGoal, setCalorieGoal] = useState("2000");
 
+	// track the selected number of days for the calorie history graph
+	const [historyRange, setHistoryRange] = useState <7 | 14 | 30>(7);
+
     const [isEditingGoal, setIsEditingGoal] = useState(false);
 	
 	// store messages about saving the calorie goal to the backend 
 	const [goalMessage, setGoalMessage] = useState("");
+
+	useEffect(() => {
+		async function restoreSession() {
+			try {
+				const response = await fetch("http://localhost:8000/session", {
+					credentials: "include",
+				});
+
+				if (response.ok) {
+					const data = await response.json();
+
+					setUserId(data.user_id);
+					setView("tracker");
+				}
+			} catch (error) {
+				console.error("Could not restore session:", error);
+			} finally {
+				setCheckingSession(false);
+			}
+		}
+
+		restoreSession();
+	}, []);
+
+	// automatically log out after five minutes of inactivity
+	useEffect(() => {
+		// only track inactivity when someone is logged in
+		if (userId === null) return;
+
+		const INACTIVITY_LIMIT = 5 * 60 * 1000;
+		const REFRESH_INTERVAL = 30 * 1000;
+
+		let inactivityTimer: ReturnType<typeof setTimeout>;
+		let lastActivity = Date.now();
+		let lastRefresh = Date.now();
+		let refreshing = false;
+		let stopped = false;
+
+		// clear the account information after the session expires
+		function expireSession() {
+			if (stopped) return;
+
+			stopped = true;
+			// invalidate the session on the backend as well
+			void fetch("http://localhost:8000/logout", {
+				method: "POST",
+				credentials: "include",
+			}).catch((error) => {
+				console.error("Could not invalidate expired session:", error);
+			});
+			setUserId(null);
+			setFoodEntries([]);
+			setEmail("");
+			setPassword("");
+			setAuthMessage("Your session expired. Please log in again.");
+			setView("login");
+		}
+
+		// check the backend and renew the session during genuine activity
+		async function refreshSession() {
+			if (refreshing || stopped) return;
+
+			refreshing = true;
+
+			try {
+				const response = await fetch("http://localhost:8000/session", {
+					credentials: "include",
+				});
+
+				if (response.status === 401) {
+					expireSession();
+				} else if (response.ok) {
+					lastRefresh = Date.now();
+				}
+			} catch (error) {
+				console.error("Session refresh error:", error);
+			} finally {
+				refreshing = false;
+			}
+		}
+
+		// restart the inactivity countdown whenever the user interacts
+		function recordActivity() {
+			if (stopped) return;
+
+			const now = Date.now();
+
+			// do not revive a session after five minutes of inactivity
+			if (now - lastActivity >= INACTIVITY_LIMIT) {
+				expireSession();
+				return;
+			}
+
+			lastActivity = now;
+
+			clearTimeout(inactivityTimer);
+			inactivityTimer = setTimeout(expireSession, INACTIVITY_LIMIT);
+
+			// avoid sending a request for every mouse movement
+			if (now - lastRefresh >= REFRESH_INTERVAL) {
+				lastRefresh = now;
+				void refreshSession();
+			}
+		}
+
+		// start the initial countdown
+		inactivityTimer = setTimeout(expireSession, INACTIVITY_LIMIT);
+
+		const activityEvents = [
+			"mousemove",
+			"keydown",
+			"click",
+			"scroll",
+			"touchstart",
+		];
+
+		activityEvents.forEach((eventName) => {
+			window.addEventListener(eventName, recordActivity);
+		});
+
+		// remove timers and listeners when the user logs out
+		return () => {
+			stopped = true;
+			clearTimeout(inactivityTimer);
+
+			activityEvents.forEach((eventName) => {
+				window.removeEventListener(eventName, recordActivity);
+			});
+		};
+	}, [userId]);	
 
 	// load the saved food entries from the backend when the page opens 
 	useEffect(() => {
@@ -49,7 +186,10 @@ export default function Home() {
 			try {
 				// request saved entries from FastAPI
 				const response = await fetch(
-					`http://localhost:8000/food-entries?user_id=${userId}`
+					`http://localhost:8000/food-entries?user_id=${userId}`,
+					{
+						credentials: "include",
+					}
 				);
 
 				// stop if the backend reports an error 
@@ -93,7 +233,10 @@ export default function Home() {
 			async function loadCalorieGoal() {
 					try {
 						const response = await fetch(
-							`http://localhost:8000/calorie-goal?user_id=${userId}`
+							`http://localhost:8000/calorie-goal?user_id=${userId}`,
+							{
+								credentials: "include",
+							}
 						);
 
 						if (!response.ok) {
@@ -132,6 +275,49 @@ export default function Home() {
 		.filter((entry) => entry.date === date)
 		.reduce((total, entry) => total + entry.calories, 0);
 
+	// calculate the total calorie consumed for each recorded date 
+	const calorieHistory = Object.entries(
+		foodEntries.reduce<Record<string, number>>((totals, entry) => {
+			totals[entry.date] = (totals[entry.date] || 0) + entry.calories;
+			return totals;
+		}, {})
+	)
+		.map(([date, calories]) => ({
+			date,
+			calories,
+		}))
+
+		.sort((a, b) => a.date.localeCompare(b.date));
+	
+	// filter calorie history based on the selected number of days
+	const today = new Date();
+	const startDate = new Date();
+
+	startDate.setDate(today.getDate() - historyRange + 1);
+
+	const filteredCalorieHistory = Array.from(
+		{ length: historyRange },
+		(_, index) => {
+			const currentDate = new Date(startDate);
+			currentDate.setDate(startDate.getDate() + index);
+
+			const dateString = [
+				currentDate.getFullYear(),
+				String(currentDate.getMonth() + 1).padStart(2, "0"),
+				String(currentDate.getDate()).padStart(2, "0"),
+			].join("-");
+
+			const savedEntry = calorieHistory.find(
+				(entry) => entry.date === dateString
+			);
+
+			return {
+				date: dateString,
+				calories: savedEntry ? savedEntry.calories : 0,
+			};
+		}
+	);
+
     //calculate how many calories remain under the daily goal
     const caloriesRemaining = Number(calorieGoal) - dailyCalories;
 
@@ -154,6 +340,7 @@ export default function Home() {
 			// send the food entry to FastAPI
 			const response = await fetch("http://localhost:8000/food-entries", {
 				method : "POST",
+				credentials: "include",
 				headers: {
 					"Content-Type": "application/json",
 				},
@@ -212,6 +399,8 @@ export default function Home() {
                                 headers: {
                                         "Content-Type": "application/json",
                                 },
+
+								credentials: "include",
                                 body: JSON.stringify({ email, password }),
                         });
 
@@ -221,17 +410,21 @@ export default function Home() {
                         // display the backend's error if authentication fails.
                         if (!response.ok) {
                                 setAuthMessage(data.detail || "Authentication failed.");
-                                return;
-                        }
+														return;
+												}
 
-                        // save the ID returned by the backend.
-                        setUserId(data.user_id);
+						// registration creates an account but does not log the user in
+						if (view === "register") {
+							setView("login");
+							setPassword("");
+							setAuthMessage("Account created successfully! Please log in.");
+							return;
+						}
 
-                        // display the success message returned by the backend.
-                        setAuthMessage(data.message);
-
-                        // open the calorie tracker after successful authentication.
-                        setView("tracker");
+						// successful login stores the authenticated user's ID
+						setUserId(data.user_id);
+						setAuthMessage(data.message);
+						setView("tracker");
                 } catch (error) {
                         // display a message if the backend cannot be reached.
                         console.error("Authentication error:", error);
@@ -254,6 +447,7 @@ export default function Home() {
 			try {
 				const response = await fetch("http://localhost:8000/calorie-goal", {
 					method: "PUT",
+					credentials: "include",
 					headers: {
 						"Content-Type": "application/json",
 					},
@@ -314,6 +508,7 @@ export default function Home() {
 					`http://localhost:8000/food-entries/${entryId}`,
 					{
 						method: "PUT",
+						credentials: "include",
 						headers: {
 							"Content-Type": "application/json",
 
@@ -373,6 +568,7 @@ export default function Home() {
 					`http://localhost:8000/food-entries/${entryId}?user_id=${userId}`,
 					{
 						method: "DELETE",
+						credentials: "include",
 					}
 				);
 
@@ -390,6 +586,45 @@ export default function Home() {
 				alert("Could not delete the food entry. Please try again.");
 			}
 		}
+
+		// Log out the current user 
+		async function handleLogout() {
+			try {
+				// tell FastAPI to delete the session 
+				const response = await fetch("http://localhost:8000/logout", {
+					method: "POST",
+					credentials: "include",
+				});
+
+				if (!response.ok) {
+					throw new Error("Logout failed.");
+				}
+			} catch (error) {
+				console.error("Logout error:", error);
+			} finally {
+				// clear the user's info from the screen
+				setUserId(null);
+				setFoodEntries([]);
+				setEmail("");
+				setPassword("");
+				setAuthMessage("");
+
+				// return to the login screen
+				setView("login");
+
+			}
+		}
+
+		if (checkingSession) {
+			return (
+				<main className="min-h-screen bg-green-50 p-8">
+					<p className="text-center text-gray-700">
+						Checking your session...
+					</p>
+				</main>
+			);
+		}
+
 
         // display the login or registration screen before showing the tracker.
         if (view !== "tracker") {
@@ -586,6 +821,55 @@ export default function Home() {
 					/>
 				</section>
 
+				{/* Display the user's calorie history graph */}
+				<section className="mt-6 rounded-xl bg-white p-6 shadow">
+					<h2 className="text-xl font-semibold text-gray-800">
+						Calorie History
+					</h2>
+				{/* allow users to select the calorie history time range */}
+				<div className="mt-4">
+					<label htmlFor="history-range" className="block text-gray-700">
+						Select time range
+					</label>
+
+					<select
+						id="history-range"
+						value={historyRange}
+						onChange={(event) =>
+							setHistoryRange(Number(event.target.value) as 7 | 14 | 30)
+						}
+						className="mt-1 rounded border border-gray-300 p-2"
+					>
+						<option value={7}>Last 7 days</option>
+						<option value={14}>Last 14 days</option>
+						<option value={30}>Last 30 days</option>
+					</select>
+				</div>
+					<p className="sr-only">
+						This bar chart displays the total calories consumed on each recorded date.
+					</p>
+					<ul className="sr-only">
+						{filteredCalorieHistory.map((entry) => (
+							<li key={entry.date}>
+								{entry.date}: {entry.calories} calories
+							</li>
+						))}
+					</ul>
+
+					<div className="mt-4 h-72 w-full">
+						<ResponsiveContainer width="100%" height="100%">
+							<BarChart data={filteredCalorieHistory}>
+								<CartesianGrid strokeDasharray="3 3" />
+								<XAxis dataKey="date" />
+								<YAxis />
+								<Tooltip />
+								<Bar dataKey="calories" fill="#15803d" />
+							</BarChart>
+						</ResponsiveContainer>
+
+					</div>
+				</section>
+
 				{/* Form for recording food name, calories, and date */}
 				<section className="mt-6 rounded-xl bg-white p-6 shadow">
 					<h2 className="text-xl font-semibold text-gray-800">Add Food</h2>
@@ -750,6 +1034,16 @@ export default function Home() {
 						</ul>
 					)}
 				</section>
+			</div>
+
+			<div className="mt-10 flex justify-center pb-6">
+					<button
+						type="button"
+						onClick={handleLogout}
+						className="rounded-lg bg-red-600 px-6 py-3 font-semibold text-white hover:bg-red-700"
+					>
+						Logout
+					</button>
 			</div>
 		</main>
 	);
